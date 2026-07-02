@@ -73,6 +73,15 @@ sap.ui.define(
 
             _onSearch: function () {
                 var oView = this.base.getView();
+
+                // 조회할 때마다 이전 선택을 비운다.
+                // → 필터를 바꾼 뒤 남아있던 stale 컨텍스트에 액션(sendToBankSimu 등)을 걸어
+                //   백엔드 "Resource not found for entity" 오류가 나는 것을 방지한다.
+                var oTable = this._getTable();
+                if (oTable && oTable.clearSelection) {
+                    oTable.clearSelection();
+                }
+
                 var mConditions = this._getFilterBar().getConditions();
                 var sBukrs = this._getConditionValue(mConditions, "PAYM_BUKRS");
                 var sBankg = this._getConditionValue(mConditions, "PAYM_BANKG");

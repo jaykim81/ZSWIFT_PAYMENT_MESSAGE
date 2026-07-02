@@ -310,18 +310,157 @@ npm start              # 실백엔드 대상 (인증 필요)
 
 ---
 
+## 9. 전송 시뮬레이션 미리보기 (sendToBankSimu → 팝업)
+
+행을 선택하고 **"전송 시뮬레이션"** 버튼을 누르면, 바운드 액션 `sendToBankSimu`를 호출해
+반환된 전문(**XMLV3** 또는 **MT101** 문자열, `ZSWIFT_S_XML_RETURN.FileContent`)을 **팝업으로 미리보기**한다.
+
+### 왜 커스텀 액션인가
+
+표준 `DataFieldForAction`(예: 이미 있는 "전송"/`sendToBank`)은 액션을 실행할 뿐,
+**반환 문자열을 팝업으로 띄워주지 못한다.** 그래서 반환값을 직접 받아 Dialog에 뿌리는
+**커스텀 액션 + 핸들러 모듈** 방식으로 구현한다.
+
+### Step 1 — manifest에 커스텀 액션 등록
+
+테이블(`@UI.v1.LineItem`)의 `controlConfiguration`에 `actions`를 추가한다.
+`press`/`enabled`는 핸들러 **모듈 경로 문자열**(`<appId>.<folder>.<file>.<method>`)로 지정한다.
+
+```json
+"controlConfiguration": {
+  "@com.sap.vocabularies.UI.v1.LineItem": {
+    "tableSettings": { "type": "GridTable" },
+    "actions": {
+      "sendToBankSimu": {
+        "press":   "yspert.yswiftpaymentmsg.ext.CustomActions.onSendToBankSimu",
+        "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSingleSelection",
+        "text": "전송 시뮬레이션",
+        "requiresSelection": true
+      }
+    }
+  }
+}
+```
+
+CodeEditor로 미리보기하므로 라이브러리도 추가한다 (`sap.ui5.dependencies.libs`):
+
+```json
+"libs": { "sap.m": {}, "sap.ui.core": {}, "sap.fe.templates": {}, "sap.ui.codeeditor": {} }
+```
+
+### Step 2 — 핸들러 모듈 (`webapp/ext/CustomActions.js`)
+
+ControllerExtension이 **아니라** 순수 모듈이다(`return { ... }`).
+핸들러 시그니처는 `(oContext, aSelectedContexts)`.
+
+```js
+// 정확히 1건 선택됐을 때만 버튼 활성화 (액션이 단일 엔티티에 바운드됨)
+enabledSingleSelection: function (oBindingContext, aSelectedContexts) {
+    return !!(aSelectedContexts && aSelectedContexts.length === 1);
+},
+
+onSendToBankSimu: function (oContext, aSelectedContexts) {
+    var aCtx = (aSelectedContexts && aSelectedContexts.length) ? aSelectedContexts
+             : (oContext ? [oContext] : []);
+    if (!aCtx.length) { MessageToast.show("행을 선택하세요."); return; }
+
+    var oSelected = aCtx[0];                 // 단일 바운드 액션 → 첫 행
+    var oModel = oSelected.getModel();
+    // 바운드 액션: "<정규화된 액션명>(...)"  — (...)는 바인딩 파라미터 자리표시자(리터럴)
+    var oOp = oModel.bindContext(
+        "com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.sendToBankSimu(...)",
+        oSelected, { $$groupId: "$auto" });
+
+    oOp.execute().then(function () {
+        var oRet = oOp.getBoundContext().getObject();   // { FileContent: "..." }
+        openPreview(oRet && oRet.FileContent || "");
+    }).catch(function (e) {
+        MessageBox.error("전송 시뮬레이션 호출에 실패했습니다.\n\n" + extractErrorText(e));
+    });
+}
+```
+
+### Step 3 — 팝업 프래그먼트 (`webapp/ext/fragment/XmlPreviewDialog.fragment.xml`)
+
+`sap.ui.codeeditor.CodeEditor`(줄번호 + 구문 강조)로 표시한다.
+
+```xml
+<core:FragmentDefinition xmlns="sap.m" xmlns:core="sap.ui.core" xmlns:code="sap.ui.codeeditor">
+  <Dialog title="전송 시뮬레이션 미리보기" contentWidth="70%" resizable="true" draggable="true">
+    <content>
+      <code:CodeEditor type="xml" width="100%" height="60vh" editable="false" lineNumbers="true" />
+    </content>
+    <beginButton><Button text="복사" icon="sap-icon://copy" press="onCopy" /></beginButton>
+    <endButton><Button text="닫기" press="onClose" /></endButton>
+  </Dialog>
+</core:FragmentDefinition>
+```
+
+포인트:
+- **CodeEditor는 렌더링 이후 값을 넣어야 안정적**이다 → Dialog `afterOpen` 시점에 `setValue` + ACE `resize`.
+- **XMLV3/MT101 자동 구분**: 내용이 `<`로 시작하면 XML(들여쓰기 pretty-print + `type="xml"`), 아니면 MT101 전문으로 보고 원문 그대로 `type="text"`.
+
+### Step 4 — 실패 시 원인 파악 & 함정
+
+- 반환 실패 시 `execute()`가 reject된다. **OData 오류 본문(message/code/details) + 메시지 매니저의 백엔드 트랜지션 메시지**를 모아 보여주면 원인 파악이 쉽다(`extractErrorText`).
+- ⚠️ **`SABP_BEHV/100 · Resource not found for entity 'ZSWIFT_R_PAYMENT_MSG'`** 가 뜨면
+  이는 **백엔드(RAP)가 그 행을 키로 다시 못 읽어서** 나는 오류다(이 엔티티는 조회 시 만들어지는
+  transient 성격). 근본 해결은 백엔드에서 **read-by-key 지원**. UI에서는 완화책으로
+  **조회할 때마다 이전 선택을 비운다**(stale 컨텍스트로 액션 호출 방지):
+
+```js
+// ListReportExt.controller.js 의 _onSearch 앞부분
+var oTable = this._getTable();
+if (oTable && oTable.clearSelection) { oTable.clearSelection(); }
+```
+
+### 목 테스트
+
+`webapp/localService/mainService/data/main.js`에 `executeAction`을 export하면 목서버가
+`sendToBankSimu` 반환값을 흉내낸다(`getInitialDataSet`을 정의하지 않으면 `main.json` 정적 데이터는 그대로 유지).
+
+```js
+module.exports = {
+    executeAction: function (actionDefinition, actionData, keys) {
+        if (actionDefinition.name !== "sendToBankSimu") { return undefined; }
+        // CITI → MT101, 그 외 → XMLV3(pain.001) 샘플 반환
+        return { FileContent: /* ...전문 문자열... */ "" };
+    }
+};
+```
+
+전체 구현은 [`webapp/ext/CustomActions.js`](webapp/ext/CustomActions.js),
+[`webapp/ext/fragment/XmlPreviewDialog.fragment.xml`](webapp/ext/fragment/XmlPreviewDialog.fragment.xml) 참고.
+
+---
+
+## 10. 범용 패턴으로 확장
+
+입력값에 따라 필드를 켜고 끄는 방식은 이 앱(LayoutConfig)뿐 아니라 어디에나 쓸 수 있다.
+"엔진(표시 반영) + 전략(무엇을 보여줄지 계산)"으로 분리한 **범용 가이드**는 아래에 정리돼 있다.
+
+- [`docs/dynamic-field-visibility.md`](docs/dynamic-field-visibility.md)
+  — 월 범위(`202606` → 1~6월 표시), 접두어, 룩업 테이블 등 전략별 예시 + 함정 표
+- [`CLAUDE.md`](CLAUDE.md) — 이 앱 기준 규칙 요약
+
+---
+
 ## 프로젝트 구조
 
 ```
 webapp/
-  ext/controller/ListReportExt.controller.js   ← 동적 컬럼 로직 (핵심)
-  annotations/annotation.xml                    ← 로컬 애노테이션
+  ext/
+    controller/ListReportExt.controller.js   ← 동적 컬럼 로직 + 조회 시 선택 해제
+    CustomActions.js                          ← 전송 시뮬레이션 액션 핸들러 (팝업 미리보기)
+    fragment/XmlPreviewDialog.fragment.xml    ← 시뮬레이션 결과 CodeEditor 팝업
+  annotations/annotation.xml                  ← 로컬 애노테이션
   localService/mainService/
-    metadata.xml                                ← OData V4 메타데이터
-    data/{main,LayoutConfig}.json               ← 목데이터
-  manifest.json                                 ← 컨트롤러 확장 등록
-CLAUDE.md                                        ← 앱 기준 규칙
-docs/dynamic-field-visibility.md                ← 범용 패턴 가이드
+    metadata.xml                              ← OData V4 메타데이터
+    data/{main,LayoutConfig}.json             ← 목데이터
+    data/main.js                              ← 목: sendToBankSimu 반환값 흉내 (테스트용)
+  manifest.json                               ← 컨트롤러 확장 + 커스텀 액션 등록
+CLAUDE.md                                      ← 앱 기준 규칙
+docs/dynamic-field-visibility.md              ← 범용 패턴 가이드
 ```
 
 ---

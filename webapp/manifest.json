@@ -68,7 +68,8 @@
       "libs": {
         "sap.m": {},
         "sap.ui.core": {},
-        "sap.fe.templates": {}
+        "sap.fe.templates": {},
+        "sap.ui.codeeditor": {}
       }
     },
     "contentDensities": {
@@ -134,6 +135,14 @@
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "GridTable"
+                  },
+                  "actions": {
+                    "sendToBankSimu": {
+                      "press": "yspert.yswiftpaymentmsg.ext.CustomActions.onSendToBankSimu",
+                      "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSingleSelection",
+                      "text": "전송 시뮬레이션",
+                      "requiresSelection": true
+                    }
                   }
                 }
               }
