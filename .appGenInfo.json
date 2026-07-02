@@ -1,0 +1,28 @@
+{
+  "generationParameters": {
+    "generationDate": "Thu Jul 02 2026 10:46:43 GMT+0900 (Korean Standard Time)",
+    "generatorPlatform": "Visual Studio Code",
+    "serviceType": "SAP System (ABAP On-Premise)",
+    "metadataFilename": "",
+    "serviceUrl": "https://172.30.1.250:44360/sap/opu/odata4/sap/zswift_r_payment_msg_ui_v4/srvd/sap/zswift_r_payment_msg_ui/0001/",
+    "appName": "yswiftpaymentmsg",
+    "appTitle": "스위프트 지급",
+    "appDescription": "스위프트 지급",
+    "appNamespace": "yspert",
+    "ui5Theme": "sap_horizon",
+    "ui5Version": "1.108.0",
+    "enableEslint": false,
+    "enableTypeScript": false,
+    "showMockDataInfo": true,
+    "generatorVersion": "1.20.1",
+    "template": "List Report Page V4",
+    "generatorName": "SAP Fiori Application Generator",
+    "entityRelatedConfig": [
+      {
+        "type": "Main Entity",
+        "value": "main"
+      }
+    ],
+    "launchText": "To launch the generated application, run the following from the generated application root folder:\n\n```\n    npm start\n```"
+  }
+}

@@ -1,0 +1,62 @@
+[
+    {
+        "Bankgr": "BOFA",
+        "Pmedium": "XMLV3",
+        "Gtype": "F",
+        "Seqno": "0001",
+        "FieldName": "INSTDAMT",
+        "Xschk": "",
+        "Xlocal": "",
+        "Xcrsbd": "",
+        "Xsepa": "",
+        "Xiban": "",
+        "Hidden": "",
+        "CompanyCode": "1000",
+        "doctype": ""
+    },
+    {
+        "Bankgr": "BOFA",
+        "Pmedium": "XMLV3",
+        "Gtype": "F",
+        "Seqno": "0002",
+        "FieldName": "PYMT_TYPE",
+        "Xschk": "",
+        "Xlocal": "",
+        "Xcrsbd": "",
+        "Xsepa": "",
+        "Xiban": "",
+        "Hidden": "",
+        "CompanyCode": "1000",
+        "doctype": ""
+    },
+    {
+        "Bankgr": "BOFA",
+        "Pmedium": "XMLV3",
+        "Gtype": "F",
+        "Seqno": "0003",
+        "FieldName": "NO_SUCH_FIELD",
+        "Xschk": "",
+        "Xlocal": "",
+        "Xcrsbd": "",
+        "Xsepa": "",
+        "Xiban": "",
+        "Hidden": "",
+        "CompanyCode": "1000",
+        "doctype": ""
+    },
+    {
+        "Bankgr": "CITI",
+        "Pmedium": "MT101",
+        "Gtype": "F",
+        "Seqno": "0001",
+        "FieldName": "PURPOSE_CODE",
+        "Xschk": "",
+        "Xlocal": "",
+        "Xcrsbd": "",
+        "Xsepa": "",
+        "Xiban": "",
+        "Hidden": "",
+        "CompanyCode": "2000",
+        "doctype": ""
+    }
+]
