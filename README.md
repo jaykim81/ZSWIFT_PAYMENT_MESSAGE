@@ -314,12 +314,23 @@ npm start              # 실백엔드 대상 (인증 필요)
 
 툴바에 **두 개의 커스텀 액션 버튼**이 있다. 둘 다 바운드 액션을 호출해 반환값을 **팝업**으로 보여준다.
 
-| 버튼(라벨) | 액션 | 반환(`ZSWIFT_S_XML_RETURN.FileContent`) | 팝업 형태 |
-| --- | --- | --- | --- |
-| **Send Simulation** | `sendToBankSimu` | XMLV3(pain.001) / MT101 **전문 문자열** | CodeEditor (구문 강조) |
-| **Applied Ruleset** | `ValiLog` | **JSON 배열 문자열**(적용 룰셋 검증 로그) | sap.m.Table (표) |
+| 버튼(라벨) | 액션 | 반환 타입 · 필드 | 의미 | 팝업 형태 |
+| --- | --- | --- | --- | --- |
+| **Send Simulation** | `sendToBankSimu` | `ZSWIFT_S_XML_RETURN` = `FileContent` + `valilog` | **전문 + 전체(글로벌) 룰셋** | **통합 팝업**: 상단 CodeEditor(전문) + 하단 Table(전체 룰셋) |
+| **Applied Ruleset** | `ValiLog` | `ZSWIFT_S_VALI_RETURN` = `valilog` | **라인별 룰셋** | sap.m.Table (표) |
 
-> 라벨은 영어로 노출한다(사용자 요청): `sendToBankSimu` = **"Send Simulation"**, `ValiLog` = **"Applied Ruleset"**.
+> 라벨은 영어로 노출한다: `sendToBankSimu` = **"Send Simulation"**, `ValiLog` = **"Applied Ruleset"**.
+
+### ★ 리턴 구조가 핵심 — 두 액션의 필드가 다르다
+
+- `ValiLog` → `ZSWIFT_S_VALI_RETURN.valilog` (라인별 룰셋 **JSON 배열 문자열**)
+- `sendToBankSimu` → `ZSWIFT_S_XML_RETURN` 안에 **두 필드**:
+  - `FileContent` = 전문(XMLV3/MT101)
+  - `valilog` = 전체(글로벌) 룰셋 **JSON 배열 문자열**
+
+즉 "적용 룰셋"은 두 곳에서 나온다 — **라인별**은 `ValiLog.valilog`, **전체**는 `sendToBankSimu.valilog`.
+룰셋 JSON 원소 형태는 동일하다: `{ fieldname, condtype, seqno, value, valueAfter }`.
+→ 프런트는 리턴 **객체 전체를 받아 필드별로 뽑는다**(`FileContent` / `valilog`). 아래 `distinctField` 참고.
 
 ### 왜 커스텀 액션인가
 
@@ -384,6 +395,19 @@ UI5 OData V4가 자동으로 **하나의 `$batch` 안 하나의 changeset**에 N
 > `ValiLog`/`sendToBankSimu`는 백엔드 메타데이터에 이미 정의된 **인스턴스 바운드**(단일 `mainType`) 액션이다.
 > `ValiLog`가 컬렉션(static)으로 돼 있으면 로컬 `metadata.xml`의 `_it` 파라미터도 단일 `mainType`으로 맞춰야
 > 단일 컨텍스트 바인딩 URL(`main(키)/ValiLog`)과 일치한다.
+>
+> **로컬 `metadata.xml`의 리턴 복합타입도 백엔드와 맞춰야 값이 바인딩된다:**
+> ```xml
+> <ComplexType Name="ZSWIFT_S_XML_RETURN">
+>     <Property Name="FileContent" Type="Edm.String"/>
+>     <Property Name="valilog" Type="Edm.String"/>
+> </ComplexType>
+> <ComplexType Name="ZSWIFT_S_VALI_RETURN">
+>     <Property Name="valilog" Type="Edm.String"/>
+> </ComplexType>
+> ```
+> 그리고 `<Action Name="ValiLog">`의 `<ReturnType>`은 `ZSWIFT_S_VALI_RETURN`,
+> `<Action Name="sendToBankSimu">`는 `ZSWIFT_S_XML_RETURN`을 가리키게 한다.
 
 CodeEditor로 미리보기하므로 라이브러리도 추가한다 (`sap.ui5.dependencies.libs`):
 
@@ -395,7 +419,8 @@ CodeEditor로 미리보기하므로 라이브러리도 추가한다 (`sap.ui5.de
 
 ControllerExtension이 **아니라** 순수 모듈이다(`return { ... }`).
 핸들러 시그니처는 `(oContext, aSelectedContexts)`.
-두 액션이 공유하는 **changeset 그룹핑 헬퍼**를 먼저 둔다.
+두 액션이 공유하는 **changeset 그룹핑 헬퍼**를 먼저 둔다. 리턴 필드가 액션마다 다르므로
+헬퍼는 **리턴 객체 배열을 그대로 넘기고**, 필드 추출은 `distinctField`로 한다.
 
 ```js
 // 1건 이상 선택되면 버튼 활성화 (단일/멀티 모두 허용)
@@ -404,60 +429,70 @@ enabledSelection: function (oBindingContext, aSelectedContexts) {
 },
 
 // 선택 건마다 인스턴스 바운드 액션을 걸되, 동일 $auto 배치에 실어 "하나의 changeset"으로 전송.
-// → 백엔드 #CHANGE_SET 이 선택 키 전체를 한 번에 받아 처리. 반환은 빈 값/중복 제거한 FileContent 배열.
-_executeInOneChangeSet: function (oModel, sAction, aCtx) {
+// → 백엔드 #CHANGE_SET 이 선택 키 전체를 한 번에 받아 처리. 반환은 각 호출의 리턴 객체 배열.
+function executeInOneChangeSet(oModel, sAction, aCtx) {
     var aOps = aCtx.map(function (oCtx) {
         return oModel.bindContext(sAction, oCtx, { $$groupId: "$auto" });
     });
     return Promise.all(aOps.map(function (oOp) {
         return oOp.execute().then(function () {
-            var oRet = oOp.getBoundContext().getObject();   // { FileContent: "..." }
-            return oRet && oRet.FileContent || "";
+            var oBound = oOp.getBoundContext();
+            return (oBound && oBound.getObject()) || {};   // { FileContent, valilog } 등
         });
-    })).then(function (aContents) {
-        var aDistinct = [];
-        aContents.forEach(function (s) {
-            if (s && String(s).trim() && aDistinct.indexOf(s) === -1) { aDistinct.push(s); }
-        });
-        return aDistinct;
+    }));
+}
+
+// 리턴 객체 배열에서 특정 필드의 비어있지 않은 값(중복 제거)만 뽑는다 (합쳐진 결과는 보통 1건).
+function distinctField(aResults, sField) {
+    var aOut = [];
+    aResults.forEach(function (o) {
+        var s = o && o[sField];
+        if (s && String(s).trim() && aOut.indexOf(s) === -1) { aOut.push(s); }
     });
+    return aOut;
+}
+
+// JSON 문자열 배열 → 룰셋 행 배열
+function parseRuleRows(aStrings) {
+    var aRows = [];
+    aStrings.forEach(function (s) {
+        try { var arr = JSON.parse(s); if (Array.isArray(arr)) { aRows = aRows.concat(arr); } }
+        catch (e) { Log.error("ruleset JSON parse failed", e); }
+    });
+    return aRows;
 }
 ```
 
 > 바운드 액션 이름은 `"<정규화된 액션명>(...)"` 형식이다. 끝의 `(...)`는 **바인딩 파라미터 자리표시자(리터럴)**.
 > 예: `"com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.sendToBankSimu(...)"`
 
-**전송 시뮬레이션** — 합쳐진 전문을 CodeEditor 팝업에 표시:
+**전송 시뮬레이션** — `FileContent`(전문) + `valilog`(전체 룰셋)를 **하나의 통합 팝업**에 표시:
 
 ```js
 onSendToBankSimu: function (oContext, aSelectedContexts) {
-    var aCtx = (aSelectedContexts && aSelectedContexts.length) ? aSelectedContexts
-             : (oContext ? [oContext] : []);
+    var aCtx = pickContexts(aSelectedContexts, oContext);
     if (!aCtx.length) { MessageToast.show("행을 선택하세요."); return; }
 
-    this._executeInOneChangeSet(aCtx[0].getModel(), SIMU_ACTION, aCtx).then(function (aContents) {
-        if (!aContents.length) { MessageToast.show("반환된 전문이 비어 있습니다."); }
-        openPreview(aContents.join("\n\n"));   // 합쳐진 전문은 보통 1건
+    executeInOneChangeSet(aCtx[0].getModel(), SIMU_ACTION, aCtx).then(function (aResults) {
+        var sMessage = distinctField(aResults, "FileContent").join("\n\n"); // 합쳐진 전문(보통 1건)
+        var aRows    = parseRuleRows(distinctField(aResults, "valilog"));    // 전체 룰셋
+        if (!sMessage && !aRows.length) { MessageToast.show("반환 결과가 비어 있습니다."); }
+        openSimulation(sMessage, aRows);   // 상단 CodeEditor + 하단 Table
     }).catch(function (e) {
         MessageBox.error("전송 시뮬레이션 호출에 실패했습니다.\n\n" + extractErrorText(e));
     });
 }
 ```
 
-**적용 룰셋** — 반환 JSON을 파싱해 표로 표시:
+**적용 룰셋** — `valilog`(라인별)만 파싱해 표로 표시:
 
 ```js
 onValiLog: function (oContext, aSelectedContexts) {
-    var aCtx = (aSelectedContexts && aSelectedContexts.length) ? aSelectedContexts
-             : (oContext ? [oContext] : []);
+    var aCtx = pickContexts(aSelectedContexts, oContext);
     if (!aCtx.length) { MessageToast.show("행을 선택하세요."); return; }
 
-    this._executeInOneChangeSet(aCtx[0].getModel(), VALILOG_ACTION, aCtx).then(function (aContents) {
-        var aRows = [];
-        aContents.forEach(function (s) {
-            try { var arr = JSON.parse(s); if (Array.isArray(arr)) { aRows = aRows.concat(arr); } }
-            catch (e) { Log.error("ValiLog parse failed", e); }
-        });
+    executeInOneChangeSet(aCtx[0].getModel(), VALILOG_ACTION, aCtx).then(function (aResults) {
+        var aRows = parseRuleRows(distinctField(aResults, "valilog"));
         openValiLog(aRows);   // sap.m.Table 팝업 (JSONModel "valiLog" > /rows)
     }).catch(function (e) {
         MessageBox.error("적용 룰셋 조회에 실패했습니다.\n\n" + extractErrorText(e));
@@ -467,25 +502,49 @@ onValiLog: function (oContext, aSelectedContexts) {
 
 ### Step 3 — 팝업 프래그먼트 2종
 
-**(a) `webapp/ext/fragment/XmlPreviewDialog.fragment.xml`** — `sap.ui.codeeditor.CodeEditor`(줄번호 + 구문 강조):
+**(a) `webapp/ext/fragment/SimulationDialog.fragment.xml`** — 통합 팝업(상단 전문 + 하단 전체 룰셋):
 
 ```xml
 <core:FragmentDefinition xmlns="sap.m" xmlns:core="sap.ui.core" xmlns:code="sap.ui.codeeditor">
-  <Dialog title="전송 시뮬레이션 미리보기" contentWidth="70%" resizable="true" draggable="true">
+  <Dialog title="Send Simulation" contentWidth="80%" resizable="true" draggable="true" stretchOnPhone="true">
     <content>
-      <code:CodeEditor type="xml" width="100%" height="60vh" editable="false" lineNumbers="true" />
+      <VBox fitContainer="true" class="sapUiSmallMargin">
+        <Title text="Message" class="sapUiTinyMarginBottom" />
+        <code:CodeEditor type="xml" width="100%" height="52vh" editable="false" lineNumbers="true" />
+
+        <Title text="Applied Ruleset (Global)" class="sapUiMediumMarginTop sapUiTinyMarginBottom" />
+        <Table items="{sim>/rows}" growing="true" noDataText="적용된 룰셋이 없습니다.">
+          <columns>
+            <Column width="4rem" hAlign="End"><Text text="Seq" /></Column>
+            <Column><Text text="Field" /></Column>
+            <Column width="8rem"><Text text="Cond. Type" /></Column>
+            <Column><Text text="Value" /></Column>
+            <Column><Text text="Value After" /></Column>
+          </columns>
+          <items>
+            <ColumnListItem>
+              <cells>
+                <Text text="{sim>seqno}" /><Text text="{sim>fieldname}" /><Text text="{sim>condtype}" />
+                <Text text="{sim>value}" /><Text text="{sim>valueAfter}" />
+              </cells>
+            </ColumnListItem>
+          </items>
+        </Table>
+      </VBox>
     </content>
-    <beginButton><Button text="복사" icon="sap-icon://copy" press="onCopy" /></beginButton>
-    <endButton><Button text="닫기" press="onClose" /></endButton>
+    <beginButton><Button text="Copy" icon="sap-icon://copy" press="onSimCopy" /></beginButton>
+    <endButton><Button text="Close" press="onSimClose" /></endButton>
   </Dialog>
 </core:FragmentDefinition>
 ```
 
 포인트:
-- **CodeEditor는 렌더링 이후 값을 넣어야 안정적**이다 → Dialog `afterOpen` 시점에 `setValue` + ACE `resize`.
-- **XMLV3/MT101 자동 구분**: 내용이 `<`로 시작하면 XML(들여쓰기 pretty-print + `type="xml"`), 아니면 MT101 전문으로 보고 원문 그대로 `type="text"`.
+- 핸들러가 하단 표는 named model **`sim`** (`{ rows: [...] }`)로, 상단 전문은 `afterOpen` 시점에 CodeEditor에 주입.
+- **CodeEditor는 렌더링 이후 값을 넣어야 안정적** → `oDialog.findAggregatedObjects(true, c => c.isA("sap.ui.codeeditor.CodeEditor"))`로 찾아 `setValue` + ACE `resize`.
+- **XMLV3/MT101 자동 구분**: 내용이 `<`로 시작하면 XML(들여쓰기 + `type="xml"`), 아니면 원문 그대로 `type="text"`.
+- 전문 영역 높이는 CodeEditor `height`(예: `52vh`)로 조절.
 
-**(b) `webapp/ext/fragment/ValiLogDialog.fragment.xml`** — `sap.m.Table`로 룰셋 로그를 표 형태로:
+**(b) `webapp/ext/fragment/ValiLogDialog.fragment.xml`** — `sap.m.Table`로 라인별 룰셋을 표 형태로:
 
 ```xml
 <core:FragmentDefinition xmlns="sap.m" xmlns:core="sap.ui.core">
@@ -545,14 +604,19 @@ module.exports = {
     executeAction: function (actionDefinition, actionData, keys) {
         var sName = actionDefinition && actionDefinition.name;
         if (sName === "ValiLog") {
-            // 적용 룰셋(검증 로그)을 JSON 배열 문자열로 FileContent 에 담아 반환
-            return { FileContent: JSON.stringify([
+            // 라인별 룰셋을 JSON 배열 문자열로 valilog 에 담아 반환
+            return { valilog: JSON.stringify([
                 { fieldname: "PYMT_TYPE", condtype: "1", seqno: 1, value: "2", valueAfter: "3" }
             ]) };
         }
         if (sName === "sendToBankSimu") {
-            // CITI → MT101, 그 외 → XMLV3(pain.001) 샘플 반환
-            return { FileContent: /* ...전문 문자열... */ "" };
+            // 전문(FileContent) + 전체 룰셋(valilog) 둘 다 반환
+            return {
+                FileContent: /* ...XMLV3/MT101 전문 문자열... */ "",
+                valilog: JSON.stringify([
+                    { fieldname: "MSG_TYPE", condtype: "G", seqno: 1, value: "pain.001", valueAfter: "pain.001.001.03" }
+                ])
+            };
         }
         return undefined;
     }
@@ -560,11 +624,11 @@ module.exports = {
 ```
 
 > ⚠️ **목서버 한계**: 목은 `#CHANGE_SET` 합치기를 흉내내지 못하고 액션을 **키별로 각각** 호출하므로,
-> 멀티 선택 시 목에서는 결과가 여러 건으로 보일 수 있다. **합쳐진 하나의 전문**은
+> 멀티 선택 시 목에서는 상단 전문이 **키별로 여러 블록**으로 보일 수 있다. **합쳐진 하나의 전문**은
 > 실백엔드에서만 정확히 검증된다(목은 UI 흐름/표시 로직 확인용).
 
 전체 구현은 [`webapp/ext/CustomActions.js`](webapp/ext/CustomActions.js),
-[`webapp/ext/fragment/XmlPreviewDialog.fragment.xml`](webapp/ext/fragment/XmlPreviewDialog.fragment.xml),
+[`webapp/ext/fragment/SimulationDialog.fragment.xml`](webapp/ext/fragment/SimulationDialog.fragment.xml),
 [`webapp/ext/fragment/ValiLogDialog.fragment.xml`](webapp/ext/fragment/ValiLogDialog.fragment.xml) 참고.
 
 ---
@@ -587,11 +651,11 @@ webapp/
   ext/
     controller/ListReportExt.controller.js   ← 동적 컬럼 로직 + 조회 시 선택 해제
     CustomActions.js                          ← 커스텀 액션 핸들러 (sendToBankSimu / ValiLog, changeset 그룹핑)
-    fragment/XmlPreviewDialog.fragment.xml    ← 전송 시뮬레이션 결과 CodeEditor 팝업
-    fragment/ValiLogDialog.fragment.xml       ← 적용 룰셋(검증 로그) 표(sap.m.Table) 팝업
+    fragment/SimulationDialog.fragment.xml    ← 전송 시뮬레이션 통합 팝업 (상단 전문 + 하단 전체 룰셋)
+    fragment/ValiLogDialog.fragment.xml       ← 적용 룰셋(라인별) 표(sap.m.Table) 팝업
   annotations/annotation.xml                  ← 로컬 애노테이션
   localService/mainService/
-    metadata.xml                              ← OData V4 메타데이터 (ValiLog: 인스턴스 바운드)
+    metadata.xml                              ← OData V4 메타데이터 (ValiLog→ZSWIFT_S_VALI_RETURN, sendToBankSimu→ZSWIFT_S_XML_RETURN{FileContent,valilog})
     data/{main,LayoutConfig}.json             ← 목데이터
     data/main.js                              ← 목: sendToBankSimu / ValiLog 반환값 흉내 (테스트용)
   manifest.json                               ← 컨트롤러 확장 + 커스텀 액션 2종 등록
