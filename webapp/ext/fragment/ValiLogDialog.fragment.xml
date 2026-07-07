@@ -1,0 +1,51 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core">
+    <Dialog
+        title="Applied Ruleset"
+        contentWidth="60%"
+        resizable="true"
+        draggable="true"
+        stretchOnPhone="true">
+        <content>
+            <!-- valiLog>/rows : ValiLog 액션이 반환한 JSON 배열 (FileContent 를 파싱한 결과) -->
+            <Table
+                items="{valiLog>/rows}"
+                growing="true"
+                growingThreshold="200"
+                noDataText="적용된 룰셋이 없습니다.">
+                <columns>
+                    <Column width="4rem" hAlign="End">
+                        <Text text="Seq" />
+                    </Column>
+                    <Column>
+                        <Text text="Field" />
+                    </Column>
+                    <Column width="8rem">
+                        <Text text="Cond. Type" />
+                    </Column>
+                    <Column>
+                        <Text text="Value" />
+                    </Column>
+                    <Column>
+                        <Text text="Value After" />
+                    </Column>
+                </columns>
+                <items>
+                    <ColumnListItem>
+                        <cells>
+                            <Text text="{valiLog>seqno}" />
+                            <Text text="{valiLog>fieldname}" />
+                            <Text text="{valiLog>condtype}" />
+                            <Text text="{valiLog>value}" />
+                            <Text text="{valiLog>valueAfter}" />
+                        </cells>
+                    </ColumnListItem>
+                </items>
+            </Table>
+        </content>
+        <endButton>
+            <Button text="Close" press="onValiLogClose" />
+        </endButton>
+    </Dialog>
+</core:FragmentDefinition>

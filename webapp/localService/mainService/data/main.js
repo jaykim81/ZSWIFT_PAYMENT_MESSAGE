@@ -4,6 +4,18 @@
 module.exports = {
     executeAction: function (actionDefinition, actionData, keys) {
         var sName = actionDefinition && actionDefinition.name;
+
+        // ValiLog: 시뮬레이션 시 적용된 룰셋(검증 로그)을 JSON 배열 문자열로 FileContent 에 담아 반환.
+        // (실백엔드도 ZSWIFT_S_XML_RETURN.FileContent 안에 JSON 을 넣어주는 구조)
+        if (sName === "ValiLog") {
+            var aLog = [
+                { fieldname: "PYMT_TYPE", condtype: "1", seqno: 1, value: "2", valueAfter: "3" },
+                { fieldname: "INSTDAMT", condtype: "V", seqno: 2, value: "1000.50", valueAfter: "1000.50" },
+                { fieldname: "BENEF_ACCT", condtype: "V", seqno: 3, value: "9876543210", valueAfter: "9876543210" }
+            ];
+            return { FileContent: JSON.stringify(aLog) };
+        }
+
         if (sName !== "sendToBankSimu") {
             // 다른 액션은 목에서 별도 처리하지 않음
             return undefined;

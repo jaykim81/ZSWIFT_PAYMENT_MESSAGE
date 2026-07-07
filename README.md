@@ -310,10 +310,16 @@ npm start              # 실백엔드 대상 (인증 필요)
 
 ---
 
-## 9. 전송 시뮬레이션 미리보기 (sendToBankSimu → 팝업)
+## 9. 커스텀 액션 팝업 — 전송 시뮬레이션 & 적용 룰셋
 
-행을 선택하고 **"전송 시뮬레이션"** 버튼을 누르면, 바운드 액션 `sendToBankSimu`를 호출해
-반환된 전문(**XMLV3** 또는 **MT101** 문자열, `ZSWIFT_S_XML_RETURN.FileContent`)을 **팝업으로 미리보기**한다.
+툴바에 **두 개의 커스텀 액션 버튼**이 있다. 둘 다 바운드 액션을 호출해 반환값을 **팝업**으로 보여준다.
+
+| 버튼(라벨) | 액션 | 반환(`ZSWIFT_S_XML_RETURN.FileContent`) | 팝업 형태 |
+| --- | --- | --- | --- |
+| **Send Simulation** | `sendToBankSimu` | XMLV3(pain.001) / MT101 **전문 문자열** | CodeEditor (구문 강조) |
+| **Applied Ruleset** | `ValiLog` | **JSON 배열 문자열**(적용 룰셋 검증 로그) | sap.m.Table (표) |
+
+> 라벨은 영어로 노출한다(사용자 요청): `sendToBankSimu` = **"Send Simulation"**, `ValiLog` = **"Applied Ruleset"**.
 
 ### 왜 커스텀 액션인가
 
@@ -321,10 +327,37 @@ npm start              # 실백엔드 대상 (인증 필요)
 **반환 문자열을 팝업으로 띄워주지 못한다.** 그래서 반환값을 직접 받아 Dialog에 뿌리는
 **커스텀 액션 + 핸들러 모듈** 방식으로 구현한다.
 
+### ★ 핵심 개념 — 멀티 선택은 "하나의 changeset"으로 (`invocationGrouping: #CHANGE_SET`)
+
+두 액션 모두 **여러 행을 선택**할 수 있고(1건 이상), 백엔드는 **선택한 키 전체를 한 번에 받아
+하나의 결과(합쳐진 전문 / 합쳐진 룰셋 로그)로 처리**한다. 이는 표준 `sendToBank`가 쓰는
+RAP 옵션 `invocationGrouping: #CHANGE_SET`(선택 인스턴스들을 하나의 changeset에 묶어 핸들러가
+`keys` 내부테이블로 전체를 수신)과 같은 동작이다.
+
+프런트에서 재현하는 법 — **선택 건마다 바운드 액션을 걸되 같은 `$auto` 배치로 동기 호출**하면,
+UI5 OData V4가 자동으로 **하나의 `$batch` 안 하나의 changeset**에 N개의 POST로 묶어 보낸다:
+
+```
+--batch_...
+  Content-Type: multipart/mixed;boundary=changeset_...   ← changeset 1개
+  --changeset_...
+    POST main(...VBLNR='2000000001')/...sendToBankSimu    ← 선택 1번 키
+  --changeset_...
+    POST main(...VBLNR='2000000002')/...sendToBankSimu    ← 선택 2번 키
+  --changeset_...--
+--batch_...--
+```
+
+> ⚠️ **함정**: "대표(첫) 행 1건만 호출"하면 그 키만 나가서 **여러 키 합치기가 안 된다.**
+> 반드시 선택 전체를 changeset 그룹핑으로 보낼 것.
+> 또한 합쳐진 전문은 보통 **한 결과에만** 담겨 오므로(나머지는 빈 값), 표시할 때
+> **빈 값 제거 + 중복 제거** 후 뿌린다. (전표번호 헤더 같은 걸 붙이지 않는다 — 하나의 전문이므로.)
+
 ### Step 1 — manifest에 커스텀 액션 등록
 
 테이블(`@UI.v1.LineItem`)의 `controlConfiguration`에 `actions`를 추가한다.
 `press`/`enabled`는 핸들러 **모듈 경로 문자열**(`<appId>.<folder>.<file>.<method>`)로 지정한다.
+`enabled`는 **1건 이상**이면 활성화(`enabledSelection`).
 
 ```json
 "controlConfiguration": {
@@ -333,14 +366,24 @@ npm start              # 실백엔드 대상 (인증 필요)
     "actions": {
       "sendToBankSimu": {
         "press":   "yspert.yswiftpaymentmsg.ext.CustomActions.onSendToBankSimu",
-        "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSingleSelection",
-        "text": "전송 시뮬레이션",
+        "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSelection",
+        "text": "Send Simulation",
+        "requiresSelection": true
+      },
+      "ValiLog": {
+        "press":   "yspert.yswiftpaymentmsg.ext.CustomActions.onValiLog",
+        "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSelection",
+        "text": "Applied Ruleset",
         "requiresSelection": true
       }
     }
   }
 }
 ```
+
+> `ValiLog`/`sendToBankSimu`는 백엔드 메타데이터에 이미 정의된 **인스턴스 바운드**(단일 `mainType`) 액션이다.
+> `ValiLog`가 컬렉션(static)으로 돼 있으면 로컬 `metadata.xml`의 `_it` 파라미터도 단일 `mainType`으로 맞춰야
+> 단일 컨텍스트 바인딩 URL(`main(키)/ValiLog`)과 일치한다.
 
 CodeEditor로 미리보기하므로 라이브러리도 추가한다 (`sap.ui5.dependencies.libs`):
 
@@ -352,37 +395,79 @@ CodeEditor로 미리보기하므로 라이브러리도 추가한다 (`sap.ui5.de
 
 ControllerExtension이 **아니라** 순수 모듈이다(`return { ... }`).
 핸들러 시그니처는 `(oContext, aSelectedContexts)`.
+두 액션이 공유하는 **changeset 그룹핑 헬퍼**를 먼저 둔다.
 
 ```js
-// 정확히 1건 선택됐을 때만 버튼 활성화 (액션이 단일 엔티티에 바운드됨)
-enabledSingleSelection: function (oBindingContext, aSelectedContexts) {
-    return !!(aSelectedContexts && aSelectedContexts.length === 1);
+// 1건 이상 선택되면 버튼 활성화 (단일/멀티 모두 허용)
+enabledSelection: function (oBindingContext, aSelectedContexts) {
+    return !!(aSelectedContexts && aSelectedContexts.length >= 1);
 },
 
+// 선택 건마다 인스턴스 바운드 액션을 걸되, 동일 $auto 배치에 실어 "하나의 changeset"으로 전송.
+// → 백엔드 #CHANGE_SET 이 선택 키 전체를 한 번에 받아 처리. 반환은 빈 값/중복 제거한 FileContent 배열.
+_executeInOneChangeSet: function (oModel, sAction, aCtx) {
+    var aOps = aCtx.map(function (oCtx) {
+        return oModel.bindContext(sAction, oCtx, { $$groupId: "$auto" });
+    });
+    return Promise.all(aOps.map(function (oOp) {
+        return oOp.execute().then(function () {
+            var oRet = oOp.getBoundContext().getObject();   // { FileContent: "..." }
+            return oRet && oRet.FileContent || "";
+        });
+    })).then(function (aContents) {
+        var aDistinct = [];
+        aContents.forEach(function (s) {
+            if (s && String(s).trim() && aDistinct.indexOf(s) === -1) { aDistinct.push(s); }
+        });
+        return aDistinct;
+    });
+}
+```
+
+> 바운드 액션 이름은 `"<정규화된 액션명>(...)"` 형식이다. 끝의 `(...)`는 **바인딩 파라미터 자리표시자(리터럴)**.
+> 예: `"com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.sendToBankSimu(...)"`
+
+**전송 시뮬레이션** — 합쳐진 전문을 CodeEditor 팝업에 표시:
+
+```js
 onSendToBankSimu: function (oContext, aSelectedContexts) {
     var aCtx = (aSelectedContexts && aSelectedContexts.length) ? aSelectedContexts
              : (oContext ? [oContext] : []);
     if (!aCtx.length) { MessageToast.show("행을 선택하세요."); return; }
 
-    var oSelected = aCtx[0];                 // 단일 바운드 액션 → 첫 행
-    var oModel = oSelected.getModel();
-    // 바운드 액션: "<정규화된 액션명>(...)"  — (...)는 바인딩 파라미터 자리표시자(리터럴)
-    var oOp = oModel.bindContext(
-        "com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.sendToBankSimu(...)",
-        oSelected, { $$groupId: "$auto" });
-
-    oOp.execute().then(function () {
-        var oRet = oOp.getBoundContext().getObject();   // { FileContent: "..." }
-        openPreview(oRet && oRet.FileContent || "");
+    this._executeInOneChangeSet(aCtx[0].getModel(), SIMU_ACTION, aCtx).then(function (aContents) {
+        if (!aContents.length) { MessageToast.show("반환된 전문이 비어 있습니다."); }
+        openPreview(aContents.join("\n\n"));   // 합쳐진 전문은 보통 1건
     }).catch(function (e) {
         MessageBox.error("전송 시뮬레이션 호출에 실패했습니다.\n\n" + extractErrorText(e));
     });
 }
 ```
 
-### Step 3 — 팝업 프래그먼트 (`webapp/ext/fragment/XmlPreviewDialog.fragment.xml`)
+**적용 룰셋** — 반환 JSON을 파싱해 표로 표시:
 
-`sap.ui.codeeditor.CodeEditor`(줄번호 + 구문 강조)로 표시한다.
+```js
+onValiLog: function (oContext, aSelectedContexts) {
+    var aCtx = (aSelectedContexts && aSelectedContexts.length) ? aSelectedContexts
+             : (oContext ? [oContext] : []);
+    if (!aCtx.length) { MessageToast.show("행을 선택하세요."); return; }
+
+    this._executeInOneChangeSet(aCtx[0].getModel(), VALILOG_ACTION, aCtx).then(function (aContents) {
+        var aRows = [];
+        aContents.forEach(function (s) {
+            try { var arr = JSON.parse(s); if (Array.isArray(arr)) { aRows = aRows.concat(arr); } }
+            catch (e) { Log.error("ValiLog parse failed", e); }
+        });
+        openValiLog(aRows);   // sap.m.Table 팝업 (JSONModel "valiLog" > /rows)
+    }).catch(function (e) {
+        MessageBox.error("적용 룰셋 조회에 실패했습니다.\n\n" + extractErrorText(e));
+    });
+}
+```
+
+### Step 3 — 팝업 프래그먼트 2종
+
+**(a) `webapp/ext/fragment/XmlPreviewDialog.fragment.xml`** — `sap.ui.codeeditor.CodeEditor`(줄번호 + 구문 강조):
 
 ```xml
 <core:FragmentDefinition xmlns="sap.m" xmlns:core="sap.ui.core" xmlns:code="sap.ui.codeeditor">
@@ -399,6 +484,42 @@ onSendToBankSimu: function (oContext, aSelectedContexts) {
 포인트:
 - **CodeEditor는 렌더링 이후 값을 넣어야 안정적**이다 → Dialog `afterOpen` 시점에 `setValue` + ACE `resize`.
 - **XMLV3/MT101 자동 구분**: 내용이 `<`로 시작하면 XML(들여쓰기 pretty-print + `type="xml"`), 아니면 MT101 전문으로 보고 원문 그대로 `type="text"`.
+
+**(b) `webapp/ext/fragment/ValiLogDialog.fragment.xml`** — `sap.m.Table`로 룰셋 로그를 표 형태로:
+
+```xml
+<core:FragmentDefinition xmlns="sap.m" xmlns:core="sap.ui.core">
+  <Dialog title="Applied Ruleset" contentWidth="60%" resizable="true" draggable="true">
+    <content>
+      <Table items="{valiLog>/rows}" growing="true" noDataText="적용된 룰셋이 없습니다.">
+        <columns>
+          <Column width="4rem" hAlign="End"><Text text="Seq" /></Column>
+          <Column><Text text="Field" /></Column>
+          <Column width="8rem"><Text text="Cond. Type" /></Column>
+          <Column><Text text="Value" /></Column>
+          <Column><Text text="Value After" /></Column>
+        </columns>
+        <items>
+          <ColumnListItem>
+            <cells>
+              <Text text="{valiLog>seqno}" />
+              <Text text="{valiLog>fieldname}" />
+              <Text text="{valiLog>condtype}" />
+              <Text text="{valiLog>value}" />
+              <Text text="{valiLog>valueAfter}" />
+            </cells>
+          </ColumnListItem>
+        </items>
+      </Table>
+    </content>
+    <endButton><Button text="Close" press="onValiLogClose" /></endButton>
+  </Dialog>
+</core:FragmentDefinition>
+```
+
+포인트:
+- 핸들러가 `JSONModel`을 named model **`valiLog`** 로 Dialog에 세팅하고 `{ rows: [...] }`를 채운다.
+- 반환 JSON 원소 필드명(`seqno/fieldname/condtype/value/valueAfter`)이 실백엔드와 다르면 **셀 바인딩 경로만** 맞추면 된다.
 
 ### Step 4 — 실패 시 원인 파악 & 함정
 
@@ -417,20 +538,34 @@ if (oTable && oTable.clearSelection) { oTable.clearSelection(); }
 ### 목 테스트
 
 `webapp/localService/mainService/data/main.js`에 `executeAction`을 export하면 목서버가
-`sendToBankSimu` 반환값을 흉내낸다(`getInitialDataSet`을 정의하지 않으면 `main.json` 정적 데이터는 그대로 유지).
+두 액션 반환값을 흉내낸다(`getInitialDataSet`을 정의하지 않으면 `main.json` 정적 데이터는 그대로 유지).
 
 ```js
 module.exports = {
     executeAction: function (actionDefinition, actionData, keys) {
-        if (actionDefinition.name !== "sendToBankSimu") { return undefined; }
-        // CITI → MT101, 그 외 → XMLV3(pain.001) 샘플 반환
-        return { FileContent: /* ...전문 문자열... */ "" };
+        var sName = actionDefinition && actionDefinition.name;
+        if (sName === "ValiLog") {
+            // 적용 룰셋(검증 로그)을 JSON 배열 문자열로 FileContent 에 담아 반환
+            return { FileContent: JSON.stringify([
+                { fieldname: "PYMT_TYPE", condtype: "1", seqno: 1, value: "2", valueAfter: "3" }
+            ]) };
+        }
+        if (sName === "sendToBankSimu") {
+            // CITI → MT101, 그 외 → XMLV3(pain.001) 샘플 반환
+            return { FileContent: /* ...전문 문자열... */ "" };
+        }
+        return undefined;
     }
 };
 ```
 
+> ⚠️ **목서버 한계**: 목은 `#CHANGE_SET` 합치기를 흉내내지 못하고 액션을 **키별로 각각** 호출하므로,
+> 멀티 선택 시 목에서는 결과가 여러 건으로 보일 수 있다. **합쳐진 하나의 전문**은
+> 실백엔드에서만 정확히 검증된다(목은 UI 흐름/표시 로직 확인용).
+
 전체 구현은 [`webapp/ext/CustomActions.js`](webapp/ext/CustomActions.js),
-[`webapp/ext/fragment/XmlPreviewDialog.fragment.xml`](webapp/ext/fragment/XmlPreviewDialog.fragment.xml) 참고.
+[`webapp/ext/fragment/XmlPreviewDialog.fragment.xml`](webapp/ext/fragment/XmlPreviewDialog.fragment.xml),
+[`webapp/ext/fragment/ValiLogDialog.fragment.xml`](webapp/ext/fragment/ValiLogDialog.fragment.xml) 참고.
 
 ---
 
@@ -451,14 +586,15 @@ module.exports = {
 webapp/
   ext/
     controller/ListReportExt.controller.js   ← 동적 컬럼 로직 + 조회 시 선택 해제
-    CustomActions.js                          ← 전송 시뮬레이션 액션 핸들러 (팝업 미리보기)
-    fragment/XmlPreviewDialog.fragment.xml    ← 시뮬레이션 결과 CodeEditor 팝업
+    CustomActions.js                          ← 커스텀 액션 핸들러 (sendToBankSimu / ValiLog, changeset 그룹핑)
+    fragment/XmlPreviewDialog.fragment.xml    ← 전송 시뮬레이션 결과 CodeEditor 팝업
+    fragment/ValiLogDialog.fragment.xml       ← 적용 룰셋(검증 로그) 표(sap.m.Table) 팝업
   annotations/annotation.xml                  ← 로컬 애노테이션
   localService/mainService/
-    metadata.xml                              ← OData V4 메타데이터
+    metadata.xml                              ← OData V4 메타데이터 (ValiLog: 인스턴스 바운드)
     data/{main,LayoutConfig}.json             ← 목데이터
-    data/main.js                              ← 목: sendToBankSimu 반환값 흉내 (테스트용)
-  manifest.json                               ← 컨트롤러 확장 + 커스텀 액션 등록
+    data/main.js                              ← 목: sendToBankSimu / ValiLog 반환값 흉내 (테스트용)
+  manifest.json                               ← 컨트롤러 확장 + 커스텀 액션 2종 등록
 CLAUDE.md                                      ← 앱 기준 규칙
 docs/dynamic-field-visibility.md              ← 범용 패턴 가이드
 ```

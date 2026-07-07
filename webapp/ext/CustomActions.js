@@ -1,16 +1,20 @@
 sap.ui.define(
     [
         "sap/ui/core/Fragment",
+        "sap/ui/model/json/JSONModel",
         "sap/m/MessageToast",
         "sap/m/MessageBox",
         "sap/base/Log"
     ],
-    function (Fragment, MessageToast, MessageBox, Log) {
+    function (Fragment, JSONModel, MessageToast, MessageBox, Log) {
         "use strict";
 
         // 바운드 액션의 정규화된 이름 + 바인딩 파라미터 자리표시자 "(...)"
         var SIMU_ACTION =
             "com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.sendToBankSimu(...)";
+        // ValiLog 는 인스턴스 바운드(단일 mainType) → sendToBankSimu 와 동일한 방식으로 호출
+        var VALILOG_ACTION =
+            "com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.ValiLog(...)";
 
         var oPreviewDialog;      // 팝업 1회 생성 후 재사용
         var sCurrentContent = ""; // CodeEditor 에 넣을 현재 내용
@@ -79,6 +83,39 @@ sap.ui.define(
             }
         };
 
+        var oValiLogDialog;   // 팝업 1회 생성 후 재사용
+        var oValiLogModel;    // 테이블 바인딩용 JSONModel ("valiLog")
+
+        var oValiLogFragCtrl = {
+            onValiLogClose: function () {
+                if (oValiLogDialog) { oValiLogDialog.close(); }
+            }
+        };
+
+        // ValiLog 결과 배열을 테이블 팝업으로 표시
+        function openValiLog(aRows) {
+            if (!oValiLogModel) { oValiLogModel = new JSONModel(); }
+            oValiLogModel.setData({ rows: aRows || [] });
+
+            if (oValiLogDialog) {
+                oValiLogDialog.open();
+                return;
+            }
+
+            Fragment.load({
+                name: "yspert.yswiftpaymentmsg.ext.fragment.ValiLogDialog",
+                controller: oValiLogFragCtrl
+            }).then(function (oDialog) {
+                oValiLogDialog = oDialog;
+                oDialog.setModel(oValiLogModel, "valiLog");
+                oDialog.open();
+            }).catch(function (e) {
+                Log.error("ValiLog dialog load failed", e);
+                oValiLogDialog = undefined;
+                MessageBox.error("룰셋 로그 팝업 표시에 실패했습니다.\n" + (e && e.message ? e.message : ""));
+            });
+        }
+
         // FileContent 를 팝업(CodeEditor)으로 표시
         function openPreview(sContent) {
             sCurrentContent = formatXml(sContent);
@@ -146,38 +183,91 @@ sap.ui.define(
             return aLines.join("\n");
         }
 
+        // 선택 컨텍스트 정리: aSelectedContexts 우선, 없으면 oContext 폴백
+        function pickContexts(aSelectedContexts, oContext) {
+            if (aSelectedContexts && aSelectedContexts.length) { return aSelectedContexts; }
+            return oContext ? [oContext] : [];
+        }
+
+        // 선택 건마다 인스턴스 바운드 액션을 걸되, 동일 $auto 배치에 실어 "하나의 changeset"으로 전송한다.
+        // → 백엔드 invocationGrouping:#CHANGE_SET 이 선택 키 전체를 한 번에 받아 처리(=표준 sendToBank 동작과 동일).
+        // 반환값: 비어있지 않은 FileContent 문자열 배열(중복 제거). 합쳐진 전문은 보통 한 결과에만 담겨 온다.
+        function executeInOneChangeSet(oModel, sAction, aCtx) {
+            var aOps = aCtx.map(function (oCtx) {
+                return oModel.bindContext(sAction, oCtx, { $$groupId: "$auto" });
+            });
+            return Promise.all(aOps.map(function (oOp) {
+                return oOp.execute().then(function () { return extractContent(oOp); });
+            })).then(function (aContents) {
+                var aDistinct = [];
+                aContents.forEach(function (sContent) {
+                    if (sContent && String(sContent).trim() && aDistinct.indexOf(sContent) === -1) {
+                        aDistinct.push(sContent);
+                    }
+                });
+                return aDistinct;
+            });
+        }
+
         return {
-            // 정확히 1건 선택됐을 때만 버튼 활성화 (액션이 단일 엔티티에 바운드됨)
-            enabledSingleSelection: function (oBindingContext, aSelectedContexts) {
-                return !!(aSelectedContexts && aSelectedContexts.length === 1);
+            // 1건 이상 선택되면 버튼 활성화 (단일/멀티 모두 허용, 인스턴스 바운드 액션을 선택 건마다 호출)
+            enabledSelection: function (oBindingContext, aSelectedContexts) {
+                return !!(aSelectedContexts && aSelectedContexts.length >= 1);
             },
 
             // 전송 시뮬레이션 실행 → 반환된 XMLV3/MT101 전문을 팝업 미리보기
+            // 선택 키 전체를 하나의 changeset으로 전송(백엔드가 합쳐 하나의 전문 생성) → 합쳐진 전문만 표시
             onSendToBankSimu: function (oContext, aSelectedContexts) {
-                var aCtx = (aSelectedContexts && aSelectedContexts.length)
-                    ? aSelectedContexts
-                    : (oContext ? [oContext] : []);
-
+                var aCtx = pickContexts(aSelectedContexts, oContext);
                 if (!aCtx.length) {
                     MessageToast.show("행을 선택하세요.");
                     return;
                 }
 
-                var oSelected = aCtx[0]; // 단일 바운드 액션 → 첫 번째 선택 행
-                var oModel = oSelected.getModel();
-                // FE 기본 배치 방식($auto)으로 호출한다. 실패 시 상세 메시지는 extractErrorText 로 뽑는다.
-                var oOperation = oModel.bindContext(SIMU_ACTION, oSelected, { $$groupId: "$auto" });
-
-                oOperation.execute().then(function () {
-                    var sContent = extractContent(oOperation);
-                    if (!sContent) {
+                executeInOneChangeSet(aCtx[0].getModel(), SIMU_ACTION, aCtx).then(function (aContents) {
+                    if (!aContents.length) {
                         MessageToast.show("반환된 전문이 비어 있습니다.");
                     }
-                    openPreview(sContent);
+                    // 합쳐진 전문은 보통 1건 → 그대로 표시. (혹시 서로 다른 전문이 여럿 오면 빈 줄로 구분)
+                    openPreview(aContents.join("\n\n"));
                 }).catch(function (e) {
                     Log.error("sendToBankSimu execution failed", e);
                     MessageBox.error(
                         "전송 시뮬레이션 호출에 실패했습니다.\n\n" + extractErrorText(e)
+                    );
+                });
+            },
+
+            // 적용 룰셋(검증 로그) 조회 → 반환된 JSON 배열을 테이블 팝업으로 표시
+            // 시뮬레이션과 동일하게 선택 키 전체를 하나의 changeset으로 전송 → 합쳐진 룰셋 로그를 표로 표시
+            onValiLog: function (oContext, aSelectedContexts) {
+                var aCtx = pickContexts(aSelectedContexts, oContext);
+                if (!aCtx.length) {
+                    MessageToast.show("행을 선택하세요.");
+                    return;
+                }
+
+                executeInOneChangeSet(aCtx[0].getModel(), VALILOG_ACTION, aCtx).then(function (aContents) {
+                    var aRows = [];
+                    var bParseError = false;
+                    aContents.forEach(function (sContent) {
+                        try {
+                            var aParsed = JSON.parse(sContent);
+                            if (Array.isArray(aParsed)) { aRows = aRows.concat(aParsed); }
+                        } catch (e) {
+                            Log.error("ValiLog response parse failed", e);
+                            bParseError = true;
+                        }
+                    });
+                    if (bParseError && !aRows.length) {
+                        MessageBox.error("룰셋 로그 응답을 해석할 수 없습니다.");
+                        return;
+                    }
+                    openValiLog(aRows);
+                }).catch(function (e) {
+                    Log.error("ValiLog execution failed", e);
+                    MessageBox.error(
+                        "적용 룰셋 조회에 실패했습니다.\n\n" + extractErrorText(e)
                     );
                 });
             }
