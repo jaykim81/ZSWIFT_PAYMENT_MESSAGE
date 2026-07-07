@@ -1,0 +1,59 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    xmlns:code="sap.ui.codeeditor">
+    <Dialog
+        title="Send Simulation"
+        contentWidth="80%"
+        resizable="true"
+        draggable="true"
+        stretchOnPhone="true">
+        <content>
+            <VBox fitContainer="true" class="sapUiSmallMargin">
+                <!-- 상단: 전문 (XMLV3 / MT101) -->
+                <Title text="Message" class="sapUiTinyMarginBottom" />
+                <code:CodeEditor
+                    type="xml"
+                    width="100%"
+                    height="52vh"
+                    editable="false"
+                    lineNumbers="true"
+                    colorTheme="default" />
+
+                <!-- 하단: 전체 룰셋 -->
+                <Title text="Applied Ruleset (Global)" class="sapUiMediumMarginTop sapUiTinyMarginBottom" />
+                <!-- sim>/rows : sendToBankSimu 가 반환한 valilog(전체 룰셋 JSON)를 파싱한 결과 -->
+                <Table
+                    items="{sim>/rows}"
+                    growing="true"
+                    growingThreshold="200"
+                    noDataText="적용된 룰셋이 없습니다.">
+                    <columns>
+                        <Column width="4rem" hAlign="End"><Text text="Seq" /></Column>
+                        <Column><Text text="Field" /></Column>
+                        <Column width="8rem"><Text text="Cond. Type" /></Column>
+                        <Column><Text text="Value" /></Column>
+                        <Column><Text text="Value After" /></Column>
+                    </columns>
+                    <items>
+                        <ColumnListItem>
+                            <cells>
+                                <Text text="{sim>seqno}" />
+                                <Text text="{sim>fieldname}" />
+                                <Text text="{sim>condtype}" />
+                                <Text text="{sim>value}" />
+                                <Text text="{sim>valueAfter}" />
+                            </cells>
+                        </ColumnListItem>
+                    </items>
+                </Table>
+            </VBox>
+        </content>
+        <beginButton>
+            <Button text="Copy" icon="sap-icon://copy" press="onSimCopy" />
+        </beginButton>
+        <endButton>
+            <Button text="Close" press="onSimClose" />
+        </endButton>
+    </Dialog>
+</core:FragmentDefinition>

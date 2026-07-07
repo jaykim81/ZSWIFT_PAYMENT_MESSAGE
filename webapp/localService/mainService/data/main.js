@@ -1,19 +1,20 @@
-// 목서버 전용: sendToBankSimu 액션이 XMLV3/MT101 전문(FileContent)을 반환하도록 흉내낸다.
+// 목서버 전용: 시뮬레이션/룰셋 액션 반환을 흉내낸다.
 // getInitialDataSet 을 정의하지 않으므로 main.json 의 정적 데이터는 그대로 로드된다.
 // (실백엔드에는 영향 없음 — 로컬 목 테스트용)
+//  - ValiLog        → ZSWIFT_S_VALI_RETURN.valilog          (라인별 룰셋 JSON)
+//  - sendToBankSimu → ZSWIFT_S_XML_RETURN.FileContent(전문) + .valilog(전체 룰셋 JSON)
 module.exports = {
     executeAction: function (actionDefinition, actionData, keys) {
         var sName = actionDefinition && actionDefinition.name;
 
-        // ValiLog: 시뮬레이션 시 적용된 룰셋(검증 로그)을 JSON 배열 문자열로 FileContent 에 담아 반환.
-        // (실백엔드도 ZSWIFT_S_XML_RETURN.FileContent 안에 JSON 을 넣어주는 구조)
+        // ValiLog: 라인별 룰셋을 JSON 배열 문자열로 valilog 에 담아 반환
         if (sName === "ValiLog") {
-            var aLog = [
+            var aLineLog = [
                 { fieldname: "PYMT_TYPE", condtype: "1", seqno: 1, value: "2", valueAfter: "3" },
                 { fieldname: "INSTDAMT", condtype: "V", seqno: 2, value: "1000.50", valueAfter: "1000.50" },
                 { fieldname: "BENEF_ACCT", condtype: "V", seqno: 3, value: "9876543210", valueAfter: "9876543210" }
             ];
-            return { FileContent: JSON.stringify(aLog) };
+            return { valilog: JSON.stringify(aLineLog) };
         }
 
         if (sName !== "sendToBankSimu") {
@@ -67,6 +68,13 @@ module.exports = {
             ].join("\n");
         }
 
-        return { FileContent: sContent };
+        // 전체 룰셋(글로벌) — 라인별과 구분되는 샘플
+        var aGlobalLog = [
+            { fieldname: "MSG_TYPE", condtype: "G", seqno: 1, value: "pain.001", valueAfter: "pain.001.001.03" },
+            { fieldname: "CHARGE_BEARER", condtype: "G", seqno: 2, value: "SHA", valueAfter: "SHA" },
+            { fieldname: "BATCH_BOOKING", condtype: "G", seqno: 3, value: "", valueAfter: "false" }
+        ];
+
+        return { FileContent: sContent, valilog: JSON.stringify(aGlobalLog) };
     }
 };

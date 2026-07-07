@@ -414,6 +414,10 @@
             </ComplexType>
             <ComplexType Name="ZSWIFT_S_XML_RETURN">
                 <Property Name="FileContent" Type="Edm.String" Nullable="false"/>
+                <Property Name="valilog" Type="Edm.String" Nullable="false"/>
+            </ComplexType>
+            <ComplexType Name="ZSWIFT_S_VALI_RETURN">
+                <Property Name="valilog" Type="Edm.String" Nullable="false"/>
             </ComplexType>
             <ComplexType Name="SAP__Message">
                 <Property Name="code" Type="Edm.String" Nullable="false"/>
@@ -430,7 +434,7 @@
             </Action>
             <Action Name="ValiLog" IsBound="true">
                 <Parameter Name="_it" Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.mainType" Nullable="false"/>
-                <ReturnType Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.ZSWIFT_S_XML_RETURN" Nullable="false"/>
+                <ReturnType Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.ZSWIFT_S_VALI_RETURN" Nullable="false"/>
             </Action>
             <Action Name="sendToBankSimu" IsBound="true">
                 <Parameter Name="_it" Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.mainType" Nullable="false"/>

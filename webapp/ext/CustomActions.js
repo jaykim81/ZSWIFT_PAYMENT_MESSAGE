@@ -12,12 +12,12 @@ sap.ui.define(
         // 바운드 액션의 정규화된 이름 + 바인딩 파라미터 자리표시자 "(...)"
         var SIMU_ACTION =
             "com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.sendToBankSimu(...)";
-        // ValiLog 는 인스턴스 바운드(단일 mainType) → sendToBankSimu 와 동일한 방식으로 호출
         var VALILOG_ACTION =
             "com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.ValiLog(...)";
 
-        var oPreviewDialog;      // 팝업 1회 생성 후 재사용
-        var sCurrentContent = ""; // CodeEditor 에 넣을 현재 내용
+        // 리턴 구조:
+        //  - sendToBankSimu → ZSWIFT_S_XML_RETURN { FileContent(전문), valilog(전체 룰셋 JSON) }
+        //  - ValiLog        → ZSWIFT_S_VALI_RETURN { valilog(라인별 룰셋 JSON) }
 
         // XMLV3 전문이면 true (MT101 전문은 '<' 로 시작하지 않음)
         function isXml(s) {
@@ -46,12 +46,22 @@ sap.ui.define(
             return sFormatted.trim();
         }
 
-        // CodeEditor 는 렌더링 이후에 값을 넣어야 안정적으로 표시된다 (afterOpen 시점)
-        function applyToEditor(oDialog) {
-            var oEditor = oDialog.getContent()[0];
+        // ─────────────────────────────────────────────────────────────
+        // 통합 시뮬레이션 팝업 (상단: 전문 CodeEditor / 하단: 전체 룰셋 Table)
+        // ─────────────────────────────────────────────────────────────
+        var oSimDialog;        // 팝업 1회 생성 후 재사용
+        var oSimModel;         // 하단 표 바인딩용 JSONModel ("sim")
+        var sSimMessage = "";  // 상단 CodeEditor 에 넣을 전문 (afterOpen 시점에 주입)
+
+        // CodeEditor 는 렌더링 이후에 값을 넣어야 안정적 → Dialog 안에서 찾아 값 주입
+        function applyToSimEditor(oDialog) {
+            var aEditors = oDialog.findAggregatedObjects(true, function (c) {
+                return c.isA && c.isA("sap.ui.codeeditor.CodeEditor");
+            });
+            var oEditor = aEditors[0];
             if (!oEditor || typeof oEditor.setValue !== "function") { return; }
-            oEditor.setType(isXml(sCurrentContent) ? "xml" : "text");
-            oEditor.setValue(sCurrentContent);
+            oEditor.setType(isXml(sSimMessage) ? "xml" : "text");
+            oEditor.setValue(sSimMessage);
             var oAce = (typeof oEditor.getEditor === "function" && oEditor.getEditor()) || oEditor._oEditor;
             if (oAce) {
                 oAce.resize(true);
@@ -59,15 +69,15 @@ sap.ui.define(
             }
         }
 
-        var oFragCtrl = {
-            onCopy: function () {
-                if (!sCurrentContent) { return; }
+        var oSimFragCtrl = {
+            onSimCopy: function () {
+                if (!sSimMessage) { return; }
                 try {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(sCurrentContent);
+                        navigator.clipboard.writeText(sSimMessage);
                     } else {
                         var oTa = document.createElement("textarea");
-                        oTa.value = sCurrentContent;
+                        oTa.value = sSimMessage;
                         document.body.appendChild(oTa);
                         oTa.select();
                         document.execCommand("copy");
@@ -78,11 +88,41 @@ sap.ui.define(
                     Log.error("clipboard copy failed", e);
                 }
             },
-            onClose: function () {
-                if (oPreviewDialog) { oPreviewDialog.close(); }
+            onSimClose: function () {
+                if (oSimDialog) { oSimDialog.close(); }
             }
         };
 
+        // 전문(sMessage) + 전체 룰셋(aRows)을 하나의 팝업으로 표시
+        function openSimulation(sMessage, aRows) {
+            sSimMessage = formatXml(sMessage);
+            if (!oSimModel) { oSimModel = new JSONModel(); }
+            oSimModel.setData({ rows: aRows || [] });
+
+            if (oSimDialog) {
+                oSimDialog.attachEventOnce("afterOpen", function () { applyToSimEditor(oSimDialog); });
+                oSimDialog.open();
+                return;
+            }
+
+            Fragment.load({
+                name: "yspert.yswiftpaymentmsg.ext.fragment.SimulationDialog",
+                controller: oSimFragCtrl
+            }).then(function (oDialog) {
+                oSimDialog = oDialog;
+                oDialog.setModel(oSimModel, "sim");
+                oDialog.attachEventOnce("afterOpen", function () { applyToSimEditor(oDialog); });
+                oDialog.open();
+            }).catch(function (e) {
+                Log.error("Simulation dialog load failed", e);
+                oSimDialog = undefined;
+                MessageBox.error("시뮬레이션 팝업 표시에 실패했습니다.\n" + (e && e.message ? e.message : ""));
+            });
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 적용 룰셋(라인별) 팝업 (Table)
+        // ─────────────────────────────────────────────────────────────
         var oValiLogDialog;   // 팝업 1회 생성 후 재사용
         var oValiLogModel;    // 테이블 바인딩용 JSONModel ("valiLog")
 
@@ -92,7 +132,6 @@ sap.ui.define(
             }
         };
 
-        // ValiLog 결과 배열을 테이블 팝업으로 표시
         function openValiLog(aRows) {
             if (!oValiLogModel) { oValiLogModel = new JSONModel(); }
             oValiLogModel.setData({ rows: aRows || [] });
@@ -114,44 +153,6 @@ sap.ui.define(
                 oValiLogDialog = undefined;
                 MessageBox.error("룰셋 로그 팝업 표시에 실패했습니다.\n" + (e && e.message ? e.message : ""));
             });
-        }
-
-        // FileContent 를 팝업(CodeEditor)으로 표시
-        function openPreview(sContent) {
-            sCurrentContent = formatXml(sContent);
-
-            if (oPreviewDialog) {
-                oPreviewDialog.attachEventOnce("afterOpen", function () { applyToEditor(oPreviewDialog); });
-                oPreviewDialog.open();
-                return;
-            }
-
-            Fragment.load({
-                name: "yspert.yswiftpaymentmsg.ext.fragment.XmlPreviewDialog",
-                controller: oFragCtrl
-            }).then(function (oDialog) {
-                oPreviewDialog = oDialog;
-                oDialog.attachEventOnce("afterOpen", function () { applyToEditor(oDialog); });
-                oDialog.open();
-            }).catch(function (e) {
-                Log.error("preview dialog load failed", e);
-                oPreviewDialog = undefined;
-                MessageBox.error("미리보기 팝업 표시에 실패했습니다.\n" + (e && e.message ? e.message : ""));
-            });
-        }
-
-        // 반환 컨텍스트에서 FileContent 안전하게 추출 (복합타입/프리미티브 대비)
-        function extractContent(oOperation) {
-            var oBound = oOperation.getBoundContext();
-            if (!oBound) { return ""; }
-            var oObj = oBound.getObject();
-            if (oObj && typeof oObj === "object") {
-                if (oObj.FileContent != null) { return oObj.FileContent; }
-                if (oObj.value != null) { return oObj.value; }
-            }
-            // 프리미티브로 반환되는 경우
-            var sByPath = oBound.getObject("FileContent");
-            return sByPath != null ? sByPath : (typeof oObj === "string" ? oObj : "");
         }
 
         // 실패 원인을 최대한 자세히 뽑아낸다 (백엔드 OData 오류 / SAP 메시지 / 배치 파싱 오류 구분용)
@@ -191,22 +192,42 @@ sap.ui.define(
 
         // 선택 건마다 인스턴스 바운드 액션을 걸되, 동일 $auto 배치에 실어 "하나의 changeset"으로 전송한다.
         // → 백엔드 invocationGrouping:#CHANGE_SET 이 선택 키 전체를 한 번에 받아 처리(=표준 sendToBank 동작과 동일).
-        // 반환값: 비어있지 않은 FileContent 문자열 배열(중복 제거). 합쳐진 전문은 보통 한 결과에만 담겨 온다.
+        // 반환값: 각 호출의 리턴 객체(getObject) 배열. 필드 추출은 호출부에서 distinctField 로 한다.
         function executeInOneChangeSet(oModel, sAction, aCtx) {
             var aOps = aCtx.map(function (oCtx) {
                 return oModel.bindContext(sAction, oCtx, { $$groupId: "$auto" });
             });
             return Promise.all(aOps.map(function (oOp) {
-                return oOp.execute().then(function () { return extractContent(oOp); });
-            })).then(function (aContents) {
-                var aDistinct = [];
-                aContents.forEach(function (sContent) {
-                    if (sContent && String(sContent).trim() && aDistinct.indexOf(sContent) === -1) {
-                        aDistinct.push(sContent);
-                    }
+                return oOp.execute().then(function () {
+                    var oBound = oOp.getBoundContext();
+                    return (oBound && oBound.getObject()) || {};
                 });
-                return aDistinct;
+            }));
+        }
+
+        // 리턴 객체 배열에서 특정 필드의 비어있지 않은 값(중복 제거)만 뽑는다.
+        // 합쳐진 결과는 보통 한 응답에만 담겨 오므로 대개 길이 1.
+        function distinctField(aResults, sField) {
+            var aOut = [];
+            aResults.forEach(function (o) {
+                var s = o && o[sField];
+                if (s && String(s).trim() && aOut.indexOf(s) === -1) { aOut.push(s); }
             });
+            return aOut;
+        }
+
+        // JSON 문자열 배열을 파싱해 룰셋 행 배열로 합친다.
+        function parseRuleRows(aStrings) {
+            var aRows = [];
+            aStrings.forEach(function (s) {
+                try {
+                    var aParsed = JSON.parse(s);
+                    if (Array.isArray(aParsed)) { aRows = aRows.concat(aParsed); }
+                } catch (e) {
+                    Log.error("ruleset JSON parse failed", e);
+                }
+            });
+            return aRows;
         }
 
         return {
@@ -215,8 +236,8 @@ sap.ui.define(
                 return !!(aSelectedContexts && aSelectedContexts.length >= 1);
             },
 
-            // 전송 시뮬레이션 실행 → 반환된 XMLV3/MT101 전문을 팝업 미리보기
-            // 선택 키 전체를 하나의 changeset으로 전송(백엔드가 합쳐 하나의 전문 생성) → 합쳐진 전문만 표시
+            // 전송 시뮬레이션: 선택 키 전체를 하나의 changeset으로 전송 →
+            // 반환된 전문(FileContent) + 전체 룰셋(valilog)을 하나의 통합 팝업으로 표시
             onSendToBankSimu: function (oContext, aSelectedContexts) {
                 var aCtx = pickContexts(aSelectedContexts, oContext);
                 if (!aCtx.length) {
@@ -224,12 +245,13 @@ sap.ui.define(
                     return;
                 }
 
-                executeInOneChangeSet(aCtx[0].getModel(), SIMU_ACTION, aCtx).then(function (aContents) {
-                    if (!aContents.length) {
-                        MessageToast.show("반환된 전문이 비어 있습니다.");
+                executeInOneChangeSet(aCtx[0].getModel(), SIMU_ACTION, aCtx).then(function (aResults) {
+                    var sMessage = distinctField(aResults, "FileContent").join("\n\n"); // 합쳐진 전문(보통 1건)
+                    var aRows = parseRuleRows(distinctField(aResults, "valilog"));       // 전체 룰셋
+                    if (!sMessage && !aRows.length) {
+                        MessageToast.show("반환 결과가 비어 있습니다.");
                     }
-                    // 합쳐진 전문은 보통 1건 → 그대로 표시. (혹시 서로 다른 전문이 여럿 오면 빈 줄로 구분)
-                    openPreview(aContents.join("\n\n"));
+                    openSimulation(sMessage, aRows);
                 }).catch(function (e) {
                     Log.error("sendToBankSimu execution failed", e);
                     MessageBox.error(
@@ -238,8 +260,8 @@ sap.ui.define(
                 });
             },
 
-            // 적용 룰셋(검증 로그) 조회 → 반환된 JSON 배열을 테이블 팝업으로 표시
-            // 시뮬레이션과 동일하게 선택 키 전체를 하나의 changeset으로 전송 → 합쳐진 룰셋 로그를 표로 표시
+            // 적용 룰셋(라인별): 선택 키 전체를 하나의 changeset으로 전송 →
+            // 반환된 valilog(JSON 배열)를 표 팝업으로 표시
             onValiLog: function (oContext, aSelectedContexts) {
                 var aCtx = pickContexts(aSelectedContexts, oContext);
                 if (!aCtx.length) {
@@ -247,22 +269,8 @@ sap.ui.define(
                     return;
                 }
 
-                executeInOneChangeSet(aCtx[0].getModel(), VALILOG_ACTION, aCtx).then(function (aContents) {
-                    var aRows = [];
-                    var bParseError = false;
-                    aContents.forEach(function (sContent) {
-                        try {
-                            var aParsed = JSON.parse(sContent);
-                            if (Array.isArray(aParsed)) { aRows = aRows.concat(aParsed); }
-                        } catch (e) {
-                            Log.error("ValiLog response parse failed", e);
-                            bParseError = true;
-                        }
-                    });
-                    if (bParseError && !aRows.length) {
-                        MessageBox.error("룰셋 로그 응답을 해석할 수 없습니다.");
-                        return;
-                    }
+                executeInOneChangeSet(aCtx[0].getModel(), VALILOG_ACTION, aCtx).then(function (aResults) {
+                    var aRows = parseRuleRows(distinctField(aResults, "valilog"));
                     openValiLog(aRows);
                 }).catch(function (e) {
                     Log.error("ValiLog execution failed", e);
