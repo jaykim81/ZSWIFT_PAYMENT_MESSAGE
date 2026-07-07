@@ -429,7 +429,7 @@
                 <ReturnType Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.mainType" Nullable="false"/>
             </Action>
             <Action Name="ValiLog" IsBound="true">
-                <Parameter Name="_it" Type="Collection(com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.mainType)" Nullable="false"/>
+                <Parameter Name="_it" Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.mainType" Nullable="false"/>
                 <ReturnType Type="com.sap.gateway.srvd.zswift_r_payment_msg_ui.v0001.ZSWIFT_S_XML_RETURN" Nullable="false"/>
             </Action>
             <Action Name="sendToBankSimu" IsBound="true">

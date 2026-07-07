@@ -139,8 +139,14 @@
                   "actions": {
                     "sendToBankSimu": {
                       "press": "yspert.yswiftpaymentmsg.ext.CustomActions.onSendToBankSimu",
-                      "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSingleSelection",
-                      "text": "전송 시뮬레이션",
+                      "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSelection",
+                      "text": "Send Simulation",
+                      "requiresSelection": true
+                    },
+                    "ValiLog": {
+                      "press": "yspert.yswiftpaymentmsg.ext.CustomActions.onValiLog",
+                      "enabled": "yspert.yswiftpaymentmsg.ext.CustomActions.enabledSelection",
+                      "text": "Applied Ruleset",
                       "requiresSelection": true
                     }
                   }
